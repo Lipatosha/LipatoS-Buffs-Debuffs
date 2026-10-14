@@ -58,7 +58,19 @@ function createIcon(effect) {
   description.className = "lipatos-bd-tooltip-body";
   description.textContent = plain(effect.description);
   tooltip.append(label, description);
-  holder.append(tooltip);
+  // Render the popup at body level so horizontal scrolling cannot clip it.
+  const show = () => {
+    const r = holder.getBoundingClientRect();
+    tooltip.style.top = Math.max(8, Math.min(window.innerHeight - 125, r.bottom + 8)) + "px";
+    tooltip.style.left = Math.max(8, Math.min(window.innerWidth - 355, r.left)) + "px";
+    document.body.appendChild(tooltip);
+    tooltip.classList.add("lipatos-bd-portal");
+  };
+  const hide = () => tooltip.remove();
+  holder.addEventListener("mouseenter", show);
+  holder.addEventListener("mouseleave", hide);
+  holder.addEventListener("focus", show);
+  holder.addEventListener("blur", hide);
   return holder;
 }
 function activeTurnActor(actor) {
@@ -71,6 +83,7 @@ function activeTurnActor(actor) {
 function renderBar(actor, root) {
   const existing = root.querySelector(".lipatos-bd-bar");
   if (existing) existing.remove();
+  document.querySelectorAll(".lipatos-bd-portal").forEach(el => el.remove());
   const effects = collect(actor);
   const enc = game.modules.get(ENC)?.active ? game.modules.get(ENC)?.api : null;
   const token = enc ? activeTurnActor(actor) : null;

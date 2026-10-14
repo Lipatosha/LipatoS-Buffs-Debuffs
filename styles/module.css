@@ -48,8 +48,8 @@
   border-radius: 2px;
   object-fit: cover;
 }
-.dnd5e2.sheet.actor .lipatos-bd-tooltip {
-  display: none;
+.lipatos-bd-tooltip {
+  display: block;
   pointer-events: none;
   position: fixed;
   z-index: 100000;
@@ -65,9 +65,9 @@
   font: 13px/1.45 "Roboto Condensed", sans-serif;
   text-align: left;
 }
-.dnd5e2.sheet.actor .lipatos-bd-tooltip-title { font-weight: 700; font-size: 14px; margin-bottom: 5px; color: #f5e6bd; }
-.dnd5e2.sheet.actor .lipatos-bd-tooltip-body { font-size: 13px; }
-.dnd5e2.sheet.actor .lipatos-bd-icon:is(:hover, :focus-visible) .lipatos-bd-tooltip { display: block; }
+.lipatos-bd-tooltip-title { font-weight: 700; font-size: 14px; margin-bottom: 5px; color: #f5e6bd; }
+.lipatos-bd-tooltip-body { font-size: 13px; }
+
 .dnd5e2.sheet.actor .lipatos-bd-movement {
   pointer-events: auto;
   flex: none;
