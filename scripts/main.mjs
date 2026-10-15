@@ -16,8 +16,59 @@ function actorOf(app) {
 }
 function plain(value) {
   const element = document.createElement("div");
-  element.innerHTML = String(value || "");
-  return element.textContent?.trim() || "Описание отсутствует.";
+  element.innerHTML = String(value ?? "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(?:p|div|li|h[1-6])>/gi, "\n");
+  return (element.textContent ?? "").replace(/\n{3,}/g, "\n\n").trim();
+}
+function storedDescription(doc) {
+  if (!doc) return "";
+  const fields = [doc.description, doc.system?.description?.value, doc.system?.description,
+    doc.system?.details?.description, doc.flags?.dnd5e?.description];
+  return fields.find(v => typeof v === "string" && v.trim()) ?? "";
+}
+async function resolveEffectDescription(effect, actor) {
+  let raw = storedDescription(effect), source = effect;
+  if (!raw) {
+    const origins = [effect.item, effect.parent?.documentName === "Item" ? effect.parent : null];
+    for (const uuid of [effect.system?.origin?.item, effect.system?.origin?.activity,
+      effect.system?.origin?.effect, effect.origin]) {
+      if (!uuid || typeof uuid !== "string") continue;
+      try { const doc = fromUuidSync(uuid, {strict: false}); if (doc) origins.push(doc); }
+      catch { /* source is inaccessible */ }
+    }
+    if (typeof effect.getSource === "function") {
+      try { origins.push(await effect.getSource()); } catch { /* source is inaccessible */ }
+    }
+    const name = String(effect.name ?? "").trim().toLocaleLowerCase();
+    const sourceName = String(effect.sourceName ?? "").trim().toLocaleLowerCase();
+    for (const item of actor?.items ?? []) {
+      const n = String(item.name ?? "").trim().toLocaleLowerCase();
+      if (n === name || (sourceName && n === sourceName)) origins.push(item);
+    }
+    for (const candidate of origins) {
+      if (!candidate) continue;
+      const doc = candidate.documentName === "ActiveEffect"
+        ? (candidate.item ?? (candidate.parent?.documentName === "Item" ? candidate.parent : null))
+        : candidate;
+      raw = storedDescription(doc);
+      if (raw) { source = doc; break; }
+    }
+  }
+  if (!raw) {
+    const statusId = effect.system?.type ?? (effect.statuses ? [...effect.statuses][0] : null);
+    const status = (CONFIG.statusEffects ?? []).find(s =>
+      s.id === statusId || s._id === effect.id || s.name === effect.name || s.label === effect.name);
+    raw = status?.description ?? "";
+    if (typeof raw === "string" && game.i18n?.has?.(raw)) raw = game.i18n.localize(raw);
+  }
+  if (!raw) return "";
+  try {
+    const enriched = await foundry.applications.ux.TextEditor.implementation.enrichHTML(raw, {
+      async: true, relativeTo: source ?? actor,
+      secrets: Boolean(actor?.isOwner), rollData: actor?.getRollData?.() ?? {}
+    });
+    if (plain(enriched)) return plain(enriched);
+  } catch { /* fallback to source text */ }
+  return plain(raw);
 }
 function collect(actor) {
   let all = [];
@@ -37,7 +88,7 @@ function collect(actor) {
 function iconFor(effect) {
   return effect.img || effect.icon || "icons/svg/aura.svg";
 }
-function createIcon(effect) {
+function createIcon(effect, actor) {
   const holder = document.createElement("div");
   holder.className = "lipatos-bd-icon";
   holder.tabIndex = 0;
@@ -56,7 +107,13 @@ function createIcon(effect) {
   label.textContent = effect.name || "Без названия";
   const description = document.createElement("div");
   description.className = "lipatos-bd-tooltip-body";
-  description.textContent = plain(effect.description);
+  description.textContent = "Загрузка описания…";
+  resolveEffectDescription(effect, actor).then(value => {
+    if (holder.isConnected) description.textContent = value || "Описание отсутствует в источнике эффекта.";
+  }).catch(error => {
+    console.warn("LipatoS: не удалось получить описание эффекта", error);
+    if (holder.isConnected) description.textContent = "Описание недоступно.";
+  });
   tooltip.append(label, description);
   // Render the popup at body level so horizontal scrolling cannot clip it.
   const show = () => {
@@ -93,7 +150,7 @@ function renderBar(actor, root) {
   bar.dataset.actorId = actor.id;
   const badges = document.createElement("div");
   badges.className = "lipatos-bd-icons";
-  for (const effect of effects) badges.append(createIcon(effect));
+  for (const effect of effects) badges.append(createIcon(effect, actor));
   bar.append(badges);
   if (token && !game.user.isGM && token.isOwner) {
     const move = document.createElement("div");
@@ -117,6 +174,35 @@ function renderBar(actor, root) {
     bar.append(move);
   }
   root.append(bar);
+  positionBar(root, bar);
+  watchPortrait(root);
+}
+/** Align the 32px icons precisely 2px above the portrait's upper border. */
+function positionBar(root, bar = root.querySelector(".lipatos-bd-bar")) {
+  if (!bar) return;
+  const portrait = root.querySelector(".sidebar .portrait");
+  if (!portrait) {
+    bar.style.top = "143px";  // fallback for a custom character sheet
+    return;
+  }
+  const p = portrait.getBoundingClientRect();
+  const r = root.getBoundingClientRect();
+  if (!p.height || !r.height) return;
+  bar.style.top = (p.top - r.top + root.scrollTop - ICON_SIZE - 2) + "px";
+}
+const portraitObservers = new WeakMap();
+function watchPortrait(root) {
+  const portrait = root.querySelector(".sidebar .portrait");
+  if (!portrait || typeof ResizeObserver === "undefined") return;
+  const previous = portraitObservers.get(root);
+  if (previous?.portrait === portrait) return;
+  previous?.observer.disconnect();
+  const observer = new ResizeObserver(() => positionBar(root));
+  observer.observe(root);
+  observer.observe(portrait);
+  const header = root.querySelector(".sheet-header");
+  if (header) observer.observe(header);
+  portraitObservers.set(root, {portrait, observer});
 }
 function onSheet(app, html) {
   if (game.system.id !== "dnd5e") return;
@@ -128,13 +214,21 @@ function onSheet(app, html) {
   if (!sheet) return;
   const root = sheet.querySelector(".window-content") ?? sheet;
   root.classList.add("lipatos-bd-parent");
+  const previous = roots.get(actor.uuid);
+  if (previous?.root && previous.root !== root) {
+    portraitObservers.get(previous.root)?.observer.disconnect();
+  }
   roots.set(actor.uuid, {actor, root});
   renderBar(actor, root);
 }
 function refresh(actor) {
   if (!actor) return;
   for (const [uuid, entry] of roots) {
-    if (!entry.root.isConnected) { roots.delete(uuid); continue; }
+    if (!entry.root.isConnected) {
+      portraitObservers.get(entry.root)?.observer.disconnect();
+      roots.delete(uuid);
+      continue;
+    }
     if (entry.actor.id === actor.id) renderBar(actor, entry.root);
   }
 }
@@ -144,6 +238,11 @@ Hooks.on("createActiveEffect", e => refresh(e.parent));
 Hooks.on("updateActiveEffect", e => refresh(e.parent));
 Hooks.on("deleteActiveEffect", e => refresh(e.parent));
 Hooks.on("updateActor", refresh);
+for (const action of ["createItem", "updateItem", "deleteItem"]) {
+  Hooks.on(action, item => {
+    if (item.parent?.documentName === "Actor") refresh(item.parent);
+  });
+}
 Hooks.on("controlToken", t => {if(t?.actor) refresh(t.actor);});
 Hooks.on("updateCombat", () => {for(const e of roots.values()) if(e.root.isConnected) renderBar(e.actor, e.root);});
 Hooks.on("updateCombatant", () => {for(const e of roots.values()) if(e.root.isConnected) renderBar(e.actor, e.root);});

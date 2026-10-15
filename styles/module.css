@@ -2,10 +2,11 @@
 .dnd5e2.sheet.actor .lipatos-bd-parent { position: relative !important; }
 .dnd5e2.sheet.actor .lipatos-bd-bar {
   position: absolute;
-  top: 118px;
+  /* Actual top is calculated from .sidebar .portrait, minus 34px */
+  top: 143px;
   left: 14px;
   right: 14px;
-  height: 36px;
+  height: 32px;
   z-index: 30;
   display: flex;
   align-items: center;
@@ -18,7 +19,7 @@
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
-  height: 36px;
+  height: 32px;
   gap: 4px;
   flex-wrap: nowrap;
   align-items: center;
